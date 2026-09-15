@@ -1,0 +1,142 @@
+name: content-ai-generator
+
+# All services read the same .env (optional: with no .env every integration runs in mock mode).
+x-env-file: &env-file
+  env_file:
+    - path: .env
+      required: false
+
+x-app-env: &app-env
+  DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-content_ai}:${POSTGRES_PASSWORD:-content_ai}@postgres:5432/${POSTGRES_DB:-content_ai}}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
+  # Backend and worker are separate processes, so they share a Chroma *server*
+  # (embedded Chroma must never be opened by two processes at once).
+  CHROMA_HOST: chroma
+  CHROMA_PORT: "8000"
+  MEDIA_DIR: /data/media
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-content_ai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-content_ai}
+      POSTGRES_DB: ${POSTGRES_DB:-content_ai}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  chroma:
+    # Same image as the backend, so the Chroma server matches the client library version.
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+    command: ["chroma", "run", "--path", "/data/chroma", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      ANONYMIZED_TELEMETRY: "False"
+    volumes:
+      - chroma_data:/data/chroma
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v2/heartbeat', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  backend:
+    <<: *env-file
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+    environment:
+      <<: *app-env
+    volumes:
+      - media_data:/data/media
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      chroma:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    <<: *env-file
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      args:
+        LOCAL_EMBEDDING_MODEL: ${LOCAL_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+    command: ["python", "/code/worker/worker.py"]
+    healthcheck:
+      disable: true
+    environment:
+      <<: *app-env
+    volumes:
+      - media_data:/data/media
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mcp:
+    <<: *env-file
+    build:
+      context: ./mcp
+    environment:
+      MCP_SERVER_HOST: ${MCP_SERVER_HOST:-0.0.0.0}
+      MCP_SERVER_PORT: ${MCP_SERVER_PORT:-8765}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
+      BACKEND_INTERNAL_URL: http://backend:8000
+    expose:
+      - "${MCP_SERVER_PORT:-8765}"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    <<: *env-file
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
+    expose:
+      - "80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  nginx:
+    <<: *env-file
+    build:
+      context: ./nginx
+    ports:
+      - "80:80"
+    volumes:
+      - media_data:/data/media:ro
+    depends_on:
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_healthy
+      mcp:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  chroma_data:
+  media_data:
