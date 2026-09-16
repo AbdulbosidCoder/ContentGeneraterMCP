@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api } from '../api.js';
+import { api, timeAgo } from '../api.js';
 import { useAction, useApi } from '../hooks.js';
 
 function CopyField({ label, value }) {
@@ -17,6 +17,62 @@ function CopyField({ label, value }) {
         <button type="button" className="ghost small" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
       </div>
     </div>
+  );
+}
+
+function PersonalTokens({ tokens, reload }) {
+  const [name, setName] = useState('');
+  const [created, setCreated] = useState(null);
+  const action = useAction();
+
+  const create = (event) => {
+    event.preventDefault();
+    action.run(async () => {
+      setCreated(await api.post('/mcp/tokens', { name: name || 'MCP client' }));
+      setName('');
+      await reload();
+    });
+  };
+
+  return (
+    <section className="panel">
+      <h2>Connection links</h2>
+      <p className="hint">
+        For clients that only take a URL. The link contains a secret token that acts as you, so don't share it.
+        Revoke it here if it leaks.
+      </p>
+      <form className="row" onSubmit={create}>
+        <input className="grow" value={name} onChange={(e) => setName(e.target.value)} maxLength={100}
+          placeholder="Name, e.g. Claude on my laptop" aria-label="Link name" />
+        <button type="submit" disabled={action.busy}>{action.busy ? 'Creating…' : 'Create link'}</button>
+      </form>
+      {action.error && <p className="error">{action.error}</p>}
+      {created && (
+        <div className="notice stack">
+          <p className="small"><strong>Copy this link now.</strong> It won't be shown again.</p>
+          <CopyField label="Connector URL (Claude → Settings → Connectors → Add custom connector)" value={created.connector_url} />
+          <CopyField label="Claude Code" value={created.claude_code_command} />
+        </div>
+      )}
+      {tokens?.length === 0 && !created && <p className="muted">No connection links yet.</p>}
+      <ul className="publish-list">
+        {tokens?.map((token) => (
+          <li key={token.id}>
+            <strong className="grow">{token.name}</strong>
+            <code className="small">{token.prefix}…</code>
+            <span className="small muted">used {timeAgo(token.last_used_at)}</span>
+            <button type="button" className="ghost small danger" disabled={action.busy}
+              onClick={() => action.run(async () => {
+                await api.del(`/mcp/tokens/${token.id}`);
+                if (created?.id === token.id) setCreated(null);
+                await reload();
+              })}>
+              Revoke
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -45,12 +101,14 @@ export default function McpTab() {
             {data.https_required_for_remote && (
               <p className="notice small">
                 This server runs on <code>{data.mcp_url}</code>. Local clients on this machine can connect. Remote
-                clients such as Claude on the web need a public HTTPS URL, so set <code>PUBLIC_BASE_URL</code> to your domain.
+                clients such as Claude on the web need a public HTTPS URL, so set <code>PUBLIC_BASE_URL</code> (or <code>MCP_PUBLIC_URL</code>) to your domain.
               </p>
             )}
           </>
         )}
       </section>
+
+      <PersonalTokens tokens={data?.tokens} reload={info.reload} />
 
       <section className="panel">
         <h2>Authorized clients</h2>

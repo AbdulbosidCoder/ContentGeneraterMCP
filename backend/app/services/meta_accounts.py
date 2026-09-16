@@ -108,14 +108,15 @@ def default_instagram_asset(db: Session, user: User) -> MetaAsset:
 
 
 def _page_token_for(db: Session, asset: MetaAsset) -> str | None:
+    is_mock = asset.connection.is_mock
     if asset.kind == "facebook_page":
-        return decrypt(asset.page_token_enc) if asset.page_token_enc else None
+        return decrypt(asset.page_token_enc, is_mock=is_mock) if asset.page_token_enc else None
     page = db.scalar(select(MetaAsset).where(
         MetaAsset.connection_id == asset.connection_id,
         MetaAsset.kind == "facebook_page",
         MetaAsset.external_id == asset.page_external_id,
     ))
-    return decrypt(page.page_token_enc) if page and page.page_token_enc else None
+    return decrypt(page.page_token_enc, is_mock=is_mock) if page and page.page_token_enc else None
 
 
 def client_for_asset(db: Session, asset: MetaAsset) -> tuple[GraphClient | MockGraphClient, str | None]:
@@ -127,7 +128,7 @@ def client_for_asset(db: Session, asset: MetaAsset) -> tuple[GraphClient | MockG
     if not connection.is_mock and not config.meta_configured():
         raise RuntimeError("This connection uses the real Meta API, but META_APP_ID/META_APP_SECRET are not set.")
     page_token = _page_token_for(db, asset)
-    token = page_token or decrypt(connection.access_token_enc)
+    token = page_token or decrypt(connection.access_token_enc, is_mock=connection.is_mock)
     # Mock clients are seeded by the token, so synced demo posts match the demo accounts' niche.
     return client_for_token(token, connection.is_mock), page_token
 

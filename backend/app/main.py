@@ -20,6 +20,7 @@ from rag import config as rag_config
 from rag.generation import LLMError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)  # its INFO lines include Graph URLs with access tokens
 logger = logging.getLogger("backend")
 
 

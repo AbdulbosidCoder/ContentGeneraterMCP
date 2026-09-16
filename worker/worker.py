@@ -22,6 +22,7 @@ from common.db import create_schema, session_factory, wait_for_database
 from common.models import Job, MetaAsset, MetaConnection
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)  # its INFO lines include Graph URLs with access tokens
 logger = logging.getLogger("worker")
 
 POLL_SECONDS = 2

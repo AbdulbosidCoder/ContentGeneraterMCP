@@ -9,6 +9,7 @@ x-env-file: &env-file
 x-app-env: &app-env
   DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-content_ai}:${POSTGRES_PASSWORD:-content_ai}@postgres:5432/${POSTGRES_DB:-content_ai}}
   PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
+  MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-}
   # Backend and worker are separate processes, so they share a Chroma *server*
   # (embedded Chroma must never be opened by two processes at once).
   CHROMA_HOST: chroma
@@ -99,6 +100,7 @@ services:
       MCP_SERVER_HOST: ${MCP_SERVER_HOST:-0.0.0.0}
       MCP_SERVER_PORT: ${MCP_SERVER_PORT:-8765}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost}
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-}
       BACKEND_INTERNAL_URL: http://backend:8000
     expose:
       - "${MCP_SERVER_PORT:-8765}"
@@ -135,6 +137,16 @@ services:
       mcp:
         condition: service_healthy
     restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - nginx
+    restart: unless-stopped
+
 
 volumes:
   postgres_data:

@@ -21,6 +21,7 @@ META_PERMISSIONS = [
     "email",
     "pages_show_list",
     "pages_read_engagement",
+    "pages_read_user_content",
     "pages_manage_posts",
     "read_insights",
     "business_management",
@@ -39,8 +40,13 @@ def public_base_url() -> str:
     return (env("PUBLIC_BASE_URL", "http://localhost") or "").rstrip("/")
 
 
+def mcp_public_url() -> str:
+    """Where MCP clients reach nginx; defaults to PUBLIC_BASE_URL (e.g. set https://mcp.example.com)."""
+    return (env("MCP_PUBLIC_URL") or public_base_url()).rstrip("/")
+
+
 def mcp_resource_url() -> str:
-    return f"{public_base_url()}/mcp"
+    return f"{mcp_public_url()}/mcp"
 
 
 def database_url() -> str:

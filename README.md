@@ -109,6 +109,13 @@ claude mcp add --transport http content-ai-generator http://localhost/mcp
 
 Remote clients such as Claude on the web need `PUBLIC_BASE_URL` to be a public HTTPS URL.
 
+**Connection links (no OAuth).** On the **MCP access** page a user can create a personal token
+and get a URL like `{MCP_PUBLIC_URL}/mcp?token=mcp_...`. The MCP server moves the token into the
+`Authorization` header, and the backend resolves it to that user, exactly like an OAuth token.
+Tokens don't expire, are stored hashed, can be revoked, and are stripped from nginx and MCP
+access logs. `MCP_PUBLIC_URL` (default: `PUBLIC_BASE_URL`) lets MCP live on its own host, such as
+`https://mcp.example.com`, while sign-in stays on `PUBLIC_BASE_URL`.
+
 ## Run it
 
 Requirements: Docker with Compose v2.24 or newer.
@@ -192,7 +199,7 @@ that user's data only.
 | Research | `GET /hashtags/quota`, `POST /hashtags/research`, `POST /hashtags/suggest`, `GET /hashtags/missing`, `POST /competitors/research`, `POST /ads/search` |
 | Generation | `POST /plan` (one-off plan, used by the MCP server) |
 | Publishing | `POST /media`, `POST /posts`, `GET /posts`, `GET /assets/{id}/publishing-limit` |
-| MCP | `GET /mcp`, `DELETE /mcp/grants/{client_id}` |
+| MCP | `GET /mcp`, `DELETE /mcp/grants/{client_id}`, `POST /mcp/tokens`, `DELETE /mcp/tokens/{id}` |
 | OAuth (root) | `/.well-known/oauth-authorization-server`, `/oauth/register`, `/oauth/authorize`, `/oauth/token`, `/oauth/revoke` |
 
 ## Notes

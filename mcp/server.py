@@ -1,9 +1,13 @@
-"""MCP server for content-ai-generator, protected by per-user OAuth.
+"""MCP server for content-ai-generator, protected per user.
 
-An MCP client (Claude, Claude Code, ...) discovers the authorization server via
-/.well-known/oauth-protected-resource/mcp, the user signs in with Facebook and
-approves access, and every tool call then runs as that user against their own
-connected Instagram accounts and Facebook Pages.
+Two ways to authenticate, both resolving to one user:
+- OAuth: an MCP client (Claude, Claude Code, ...) discovers the authorization server via
+  /.well-known/oauth-protected-resource/mcp, the user signs in and approves access.
+- Personal token: the connector URL carries it, {MCP_PUBLIC_URL}/mcp?token=mcp_...
+  (created in the MCP tab). It is moved into the Authorization header before auth runs.
+
+Every tool call then runs as that user against their own connected Instagram accounts
+and Facebook Pages.
 
 Run: ``python server.py`` (streamable-HTTP on MCP_SERVER_HOST:MCP_SERVER_PORT, path /mcp).
 """
@@ -12,14 +16,18 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any, Literal
+from urllib.parse import parse_qsl, urlencode
 
+import uvicorn
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from api_client import IntrospectionTokenVerifier, call_backend
 
@@ -29,6 +37,7 @@ logger = logging.getLogger("mcp.server")
 HOST = os.getenv("MCP_SERVER_HOST", "").strip() or "127.0.0.1"
 PORT = int(os.getenv("MCP_SERVER_PORT", "").strip() or "8765")
 PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL", "").strip() or "http://localhost").rstrip("/")
+MCP_PUBLIC_URL = (os.getenv("MCP_PUBLIC_URL", "").strip() or PUBLIC_BASE_URL).rstrip("/")
 
 READ_ONLY = ToolAnnotations(readOnlyHint=True, openWorldHint=True)
 RESEARCH = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=True)
@@ -48,7 +57,7 @@ mcp = FastMCP(
     token_verifier=IntrospectionTokenVerifier(),
     auth=AuthSettings(
         issuer_url=AnyHttpUrl(PUBLIC_BASE_URL),
-        resource_server_url=AnyHttpUrl(f"{PUBLIC_BASE_URL}/mcp"),
+        resource_server_url=AnyHttpUrl(f"{MCP_PUBLIC_URL}/mcp"),
         required_scopes=["mcp"],
         validate_token_resource=True,
     ),
@@ -180,6 +189,39 @@ async def health(_: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
+class QueryTokenAuth:
+    """Accepts ?token=... for clients that can only be given a URL: it becomes the bearer token.
+
+    An explicit Authorization header wins, and the token is dropped from the query string.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and b"token=" in scope.get("query_string", b""):
+            params = parse_qsl(scope["query_string"].decode("latin-1"), keep_blank_values=True)
+            token = next((v for k, v in params if k == "token"), "")
+            headers = list(scope["headers"])
+            if token and not any(name == b"authorization" for name, _ in headers):
+                headers.append((b"authorization", f"Bearer {token}".encode("latin-1")))
+            scope = {**scope, "headers": headers,
+                     "query_string": urlencode([(k, v) for k, v in params if k != "token"]).encode("latin-1")}
+        await self.app(scope, receive, send)
+
+
+class RedactTokens(logging.Filter):
+    """Keeps personal tokens out of the access log."""
+
+    _pattern = re.compile(r"(token=)[^&\s\"]+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(self._pattern.sub(r"\1***", a) if isinstance(a, str) else a for a in record.args)
+        return True
+
+
 if __name__ == "__main__":
-    logger.info("Serving MCP (OAuth-protected) at %s/mcp, authorization server %s", PUBLIC_BASE_URL, PUBLIC_BASE_URL)
-    mcp.run(transport="streamable-http")
+    logging.getLogger("uvicorn.access").addFilter(RedactTokens())
+    logger.info("Serving MCP at %s/mcp (OAuth via %s, or ?token=)", MCP_PUBLIC_URL, PUBLIC_BASE_URL)
+    uvicorn.run(QueryTokenAuth(mcp.streamable_http_app()), host=HOST, port=PORT, log_config=None)

@@ -1,7 +1,8 @@
 """Request dependencies: database session and the authenticated user.
 
-A request is authenticated either by the browser session cookie or by an OAuth
-access token issued to an MCP client (``Authorization: Bearer ...``). Either way
+A request is authenticated either by the browser session cookie or by an MCP
+bearer token (``Authorization: Bearer ...``): an OAuth access token issued to an
+MCP client, or a personal MCP token from the MCP tab. Either way
 all data access is scoped to that one user.
 """
 
@@ -14,6 +15,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services import mcp_tokens
 from common import config
 from common.db import session_factory
 from common.models import OAuthToken, User, UserSession
@@ -35,6 +37,9 @@ def get_db() -> Iterator[Session]:
 
 
 def user_from_access_token(db: Session, token: str) -> User | None:
+    personal = mcp_tokens.lookup(db, token)
+    if personal:
+        return db.get(User, personal.user_id)
     now = datetime.now(timezone.utc)
     row = db.scalar(select(OAuthToken).where(OAuthToken.access_token_hash == hash_token(token)))
     if not row or row.revoked_at or row.expires_at <= now or row.resource not in (None, config.mcp_resource_url()):

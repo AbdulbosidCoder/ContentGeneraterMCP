@@ -51,6 +51,11 @@ def _fernet(key: str | None, meta_real: bool) -> Fernet:
             "because real Facebook tokens are stored encrypted in the database."
         )
     logger.warning("TOKEN_ENCRYPTION_KEY not set: using an insecure development key (mock tokens only).")
+    return _dev_fernet()
+
+
+@lru_cache(maxsize=1)
+def _dev_fernet() -> Fernet:
     return Fernet(base64.urlsafe_b64encode(hashlib.sha256(_DEV_KEY_SEED).digest()))
 
 
@@ -62,10 +67,17 @@ def encrypt(plaintext: str) -> str:
     return cipher().encrypt(plaintext.encode()).decode()
 
 
-def decrypt(ciphertext: str) -> str:
+def decrypt(ciphertext: str, *, is_mock: bool = False) -> str:
+    """``is_mock`` also accepts the development key: demo connections created before
+    TOKEN_ENCRYPTION_KEY was set were encrypted with it, and their tokens are not secret."""
     try:
         return cipher().decrypt(ciphertext.encode()).decode()
     except InvalidToken as exc:
+        if is_mock:
+            try:
+                return _dev_fernet().decrypt(ciphertext.encode()).decode()
+            except InvalidToken:
+                pass
         raise ConfigurationError(
             "Stored token could not be decrypted; TOKEN_ENCRYPTION_KEY changed. Reconnect the account."
         ) from exc

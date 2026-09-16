@@ -17,6 +17,7 @@ from urllib.parse import urlencode, urlparse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services import mcp_tokens
 from common import config
 from common.models import OAuthAuthorizationCode, OAuthClient, OAuthToken, User
 from common.security import hash_token, new_token, pkce_challenge
@@ -201,6 +202,13 @@ def revoke(db: Session, token: str) -> None:
 
 
 def introspect(db: Session, token: str) -> dict[str, Any]:
+    personal = mcp_tokens.lookup(db, token)
+    if personal:
+        user = db.get(User, personal.user_id)
+        return {"active": True, "client_id": mcp_tokens.CLIENT_ID, "scope": " ".join(SCOPES),
+                "sub": str(personal.user_id), "username": user.email if user else None,
+                "aud": config.mcp_resource_url(), "iss": config.public_base_url()}
+
     row = db.scalar(select(OAuthToken).where(OAuthToken.access_token_hash == hash_token(token)))
     now = datetime.now(timezone.utc)
     if row is None or row.revoked_at or row.expires_at <= now:
